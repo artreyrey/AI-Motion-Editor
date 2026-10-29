@@ -1,0 +1,168 @@
+# AI MOTION STUDIO — MASTER CONTEXT FOR CODEX
+Version: Planning draft 1.1
+Status: Concept and architecture planning; implementation has NOT started.
+Purpose: Persistent, concise source of truth for IDE/Codex development. Read before proposing or changing architecture.
+
+## 1. PROJECT VISION
+Build a local-first, web-based multi-agent AI motion-production studio. The website is a unified control dashboard for three specialized conversational agents: Storyboarder, Briefer, and AI Editor. The agents can communicate through a controlled orchestrator, share project-specific context and files, and follow a human-approved production pipeline. The final objective is to produce motion edits/videos using the user's existing Claude Code SKILL.md package and templates, without assuming Adobe After Effects or other commercial editing applications are necessary.
+
+The dashboard should give a clear, real-time view of agent conversations, task status, artifacts, approvals, editing execution, errors, and previews. The UI concept is inspired by a three-column task board: replace Urgent/Important/Flexible with Storyboarder/Briefer/Editor, each with its own chat.
+
+## 2. PRIMARY USER FLOW
+1. User creates/opens a production project in the website.
+2. User chats directly with Storyboarder. It asks targeted questions about creative intent, scenes, pacing, visual direction, and transitions, reusing known context instead of asking repetitive questions.
+3. Storyboarder generates a structured, versioned storyboard artifact (e.g., storyboard.json), optionally with a human-readable view.
+4. User reviews/approves or requests revisions.
+5. Briefer receives the approved storyboard and existing project context; asks only for missing production requirements such as format, assets, resolution, duration, style, and delivery needs.
+6. Briefer generates a structured, versioned editing brief (e.g., editing_brief.json).
+7. User reviews/approves or requests revisions. Orchestrator checks compatibility and creates an editing execution plan referencing exact approved artifact versions.
+8. AI Editor waits for explicit approval before executing editing/rendering tools. It consumes approved storyboard + brief + assets, uses the existing Claude Code skills/templates, and creates previews and outputs.
+9. User monitors progress and logs, reviews previews, requests revisions, and approves final export.
+
+Agents should exchange validated structured artifacts and scoped project state, not blindly forward whole chat histories. No agent should independently treat another agent's unapproved draft as final.
+
+## 3. AGENTS
+STORYBOARDER: Creative discovery, clarify gaps, plan shots/scenes, generate and revise storyboard; does not execute video rendering.
+BRIEFER: Production discovery, use storyboard as input, gather missing technical/creative requirements, produce editing brief; avoid asking for information already available.
+AI EDITOR: Read approved inputs, plan motion edit, load existing SKILL.md and templates, call authorized local execution/rendering tools, report progress and errors, produce preview/final assets; never claim completion without verifying outputs.
+ORCHESTRATOR (not necessarily a separate chat): Route tasks, maintain state, enforce dependencies, transfer artifacts, persist checkpoints, handle retries/errors, and stop for human approvals.
+POSSIBLE FUTURE AGENT: Security agent for the user's own website. Keep this separate from the creative pipeline, with restricted permissions and review-before-patch/deploy. It is out of initial MVP scope.
+
+## 4. CONFIRMED / PLANNED TECHNOLOGIES
+Frontend: Next.js + React + Tailwind CSS. Three-column chat/workspace dashboard, project navigation, artifact review, activity/approval panel, live status.
+Backend: Python + FastAPI, running locally on user's laptop. HTTP API and optionally WebSockets or Server-Sent Events for status streaming.
+Orchestration: LangGraph, running locally. Graph state, durable checkpoints, workflow transitions, human-in-the-loop interrupts/approval.
+AI reasoning: Claude API intended for agent reasoning. Different system prompts and tool permissions for each agent. Claude API is cloud-hosted and usage-billed; local backend does NOT make inference free or offline.
+Editor execution: Existing Claude Code SKILL.md package and templates (not yet provided or inspected). Need to determine whether to integrate Claude Agent SDK/Claude Code CLI or expose equivalent controlled tools through API. Claude API alone does NOT execute local scripts or render video. The actual rendering engine/dependencies are UNCONFIRMED until the skill package is inspected. Do not assume After Effects, Remotion, FFmpeg, Blender, or any specific editor is required.
+Database: SQLite file stored locally on laptop for projects, agents, conversations, approvals, artifact metadata, execution logs and workflow state.
+Database access: SQLAlchemy ORM / SQL toolkit for application tables; Alembic for versioned schema migrations.
+Semantic retrieval (later): FAISS plus an embedding model to retrieve relevant prior projects/knowledge by meaning. FAISS is an index, not the source-of-truth database; optional for MVP. Embeddings can be generated locally if selected.
+Files: Local project directories for SKILL.md, templates, footage, assets, storyboard/brief JSON, previews and renders. Store paths, versions and hashes in SQLite, not large videos as DB blobs.
+Development: IDE with Codex. Local-first development and execution.
+
+## 5. SQLITE INSTALLATION STATUS
+User downloaded the SQLite Windows command-line tools and successfully ran sqlite3.exe. Screenshot confirmed SQLite 3.54.1 shell working. This verifies the CLI runs; a persistent application database, schema, SQLAlchemy integration, and PATH configuration have NOT yet been set up. Python's sqlite3 module can be used independently of the CLI.
+
+## 6. PROPOSED ARCHITECTURE
+Browser (Next.js dashboard)
+  -> Local FastAPI service (auth/access policy if needed, project APIs, WebSocket/SSE)
+  -> LangGraph orchestrator
+     -> Storyboarder (Claude model + permitted tools)
+     -> Briefer (Claude model + permitted tools)
+     -> AI Editor (Claude model and/or Claude Code execution integration)
+  -> SQLite via SQLAlchemy; Alembic manages schema changes
+  -> LangGraph checkpoint persistence (compatible SQLite implementation to verify)
+  -> Project filesystem (structured artifacts, skill files, assets, renders)
+  -> Optional embedding model + FAISS index for semantic retrieval
+
+Suggested local layout:
+ai-motion-studio/
+  frontend/
+  backend/
+    agents/
+    orchestration/
+    api/
+    db/
+    tools/
+  skills/
+  templates/
+  projects/<project-id>/
+    assets/
+    storyboard.json
+    editing_brief.json
+    previews/
+    renders/
+  tests/
+  .env.example
+
+## 7. KEY DATA / WORKFLOW PRINCIPLES
+- Separate project-scoped memory from per-agent conversation history.
+- Use typed schemas (e.g., Pydantic) for storyboard, brief, handoff, approval, execution plan and tool results.
+- Version artifacts; handoff by project ID + artifact ID/version rather than vague references.
+- Track states such as draft, awaiting_review, approved, rejected, queued, running, failed, completed.
+- Persist checkpoints and tool execution logs to support resuming after interruption.
+- Do not execute editing commands until user approves the exact inputs and plan.
+- Keep the website responsive while long renders run; use a local background job/worker process rather than blocking web requests.
+- Keep tool execution sandboxed/restricted to project folders; limit file access, commands, and network permissions.
+- Protect API keys in environment variables; never expose Claude keys to browser code or commit them to git.
+- Show real status, not simulated success; verify file existence and rendering outputs.
+- Track token/API usage and estimated costs; set budgets and explicit safeguards against runaway model calls.
+- SQLite is suitable for a small local deployment; use WAL, short transactions and busy timeout, and avoid uncontrolled concurrent writes.
+- Use explicit user approval for destructive edits, production deployment, or high-impact operations.
+
+## 8. UI REQUIREMENTS
+- Three distinct side-by-side chat panels: Storyboarder, Briefer, AI Editor.
+- Each panel: conversation, input, agent state, current task, generated artifacts, revisions.
+- Global project header: project selector, overall workflow status, local service connectivity.
+- Production pipeline: storyboard -> brief -> approval -> edit -> preview -> final export.
+- Artifact browser: inspect/download versioned JSON and generated media.
+- Approval queue: inspect proposed execution and accept/reject/request changes.
+- Live activity feed: agent handoffs, tool invocations, logs, errors, progress.
+- Editing preview and output list.
+- Cost and usage monitoring.
+- Responsive layout; mobile may stack the three panels.
+
+## 9. MVP SCOPE (BUILD IN STAGES)
+Phase 1: Local Next.js/FastAPI connection; 3 chat panels; project management; SQLite + SQLAlchemy + Alembic; provider-agnostic local-model calls (Ollama baseline); persisted chat histories.
+Phase 2: LangGraph handoffs, typed storyboard/brief artifacts, artifact versioning, human approval gates, recoverable workflow state.
+Phase 3: Inspect SKILL.md package, confirm its execution dependencies, safely integrate Claude Code/editor tools, execute a tiny end-to-end motion-edit test, stream progress, preview result.
+Phase 4: Robust error handling, cost controls, tests, optional FAISS semantic retrieval, better production monitoring.
+Future: Isolated security agent with scoped website scan/patch workflow and approvals.
+
+## 10. OPEN DECISIONS — DO NOT ASSUME
+- Contents, capabilities, and dependencies of existing SKILL.md package and templates (user will provide later).
+- Actual video rendering/runtime stack and file formats.
+- Claude API vs Claude Agent SDK/Claude Code CLI integration details, licensing and authentication.
+- Exact Claude model and budget limits.
+- Whether the website remains strictly localhost or is remotely accessible.
+- Whether single-user only; auth needs if remote access is introduced.
+- Local embedding model and whether FAISS is necessary.
+- OS-specific development/runtime requirements beyond user's current Windows environment.
+- Whether Storyboarder and Briefer must run sequentially or can draft concurrently; final editor handoff must use approved versions.
+
+## 11. RULES FOR CODEX
+1. Treat this document as planning context, not proof that code or integrations already exist.
+2. Do not write the full system immediately; start with a short phased plan and ask for the first implementation task.
+3. Prefer small, testable modules and minimal dependencies.
+4. Do not invent APIs, tools, SKILL.md capabilities, or claim that Claude API automatically runs Claude Code.
+5. Maintain local-first data and user-controlled approvals.
+6. Keep cloud inference costs explicit; no assumption of unlimited free Claude usage.
+7. Avoid hardcoded conversational if/else trees where context-aware model reasoning and typed validation are more appropriate.
+8. Ask for missing skill package before implementing editing execution.
+9. Do not introduce commercial video editing software unless the skill genuinely requires it and user approves.
+10. Document decisions, unresolved questions, and tested behavior as implementation proceeds.
+
+END OF CONTEXT
+
+## 12. STRICT ZERO-COST POLICY AND USER-OWNED LLM CONNECTIONS (UPDATED 2026-10-29)
+NON-NEGOTIABLE: Build and operate the application using free/open-source local infrastructure. Do not require paid subscriptions, billing activation, paid hosted databases, paid orchestration, or paid APIs. Never silently switch to a paid provider or incur usage charges. Prefer local inference (e.g., Ollama) as the guaranteed no-API-billing baseline, subject to laptop hardware and electricity costs.
+
+LLM CONNECTION DESIGN: Implement a provider-agnostic adapter layer. Each application user selects and configures their own supported provider and credentials (BYOAI / bring your own AI), with settings isolated per user and, optionally, per agent. Provider login in a browser does NOT automatically authorize API access; use only provider-supported API keys or official OAuth/SDK authentication flows where actually supported. Do not scrape session cookies, reuse private browser tokens, or assume a Claude subscription includes Claude API credits.
+
+SUPPORTED TARGETS (PLANNED, NOT ALL VERIFIED): Local Ollama; Gemini API free tier where eligible and within quotas; optional Claude API, Grok API, and Claude Code integrations only when their authentication, licensing, and costs satisfy the user's zero-charge rule. A provider may be available in the UI but must be disabled for execution when it cannot guarantee no charges. If the user later elects paid access, require an explicit policy change and consent; never treat that as the default.
+
+COST ENFORCEMENT: Default deny remote model calls until provider configuration is validated. Display free-tier quotas/limitations without promising unlimited free usage. Prefer hard provider-side spend limits or prepaid/no-billing arrangements; app-side token estimates are not reliable hard caps. If no guaranteed free remote option is available, use local inference or show a clear unavailable status. Track requests, estimated tokens, errors, and rate limits without storing secret credentials in logs.
+
+SECURITY: Store credentials securely (OS credential manager or appropriately encrypted secrets with protected keys), never in frontend bundles, repository files, plaintext SQLite records, or agent chat history. Route provider calls through the local backend; enforce per-user authorization, project isolation, and tool permissions. Never pass arbitrary local shell access to an untrusted agent.
+
+ARCHITECTURE: Next.js/Tailwind local dashboard; Python/FastAPI local backend; LangGraph orchestration and approval gates; SQLite + SQLAlchemy + Alembic for structured local persistence; optional FAISS plus local embedding model for semantic retrieval; local filesystem for assets and renders. Claude Code SKILL.md and templates are existing user assets to inspect before implementation. A skill file alone does not render video: use only free local execution/rendering dependencies confirmed by the skill package and compatible licenses. No Adobe requirement unless explicitly chosen.
+
+DEVELOPMENT STATUS: Planning only. SQLite CLI 3.54.1 confirmed operational on Windows; other dependencies not yet installed/validated. Do not implement until the user authorizes. Before writing integration code, verify official provider authentication, free-tier availability, licensing, and actual skill runtime dependencies.
+
+## 15. CONFIRMED DESIGN DECISION — PER-AGENT LLM SELECTION (2026-10-29)
+Each of the three agents MUST have an independently configurable model provider and model identifier. Storyboarder, Briefer, and AI Editor may use different providers in the same project. Each app user has separate provider connections, subject to verified official authentication and available free quotas.
+
+Default configuration (illustrative, NOT mandatory or guaranteed to work on every laptop):
+- Storyboarder: Ollama local model.
+- Briefer: Ollama local model.
+- AI Editor: Ollama for planning; optional Claude Code integration only after verifying skill compatibility, authorized authentication, and zero-charge operation. Do NOT silently call paid Claude API.
+
+Settings UI: per-agent provider dropdown, model selector, connection test, availability/free-usage warning, and local-only toggle. Store provider identifiers and model selections in SQLite; store credentials in an OS-backed secret store or secure equivalent, never plaintext database fields.
+
+Adapter contract: generate(messages, tools, model, config) plus capability flags (tool calling, structured output, context length where known, streaming). Validate each agent's selected model can perform its required tasks; if not, show an actionable error. An agent's provider selection must not change another agent's provider.
+
+Cost rule: STRICT NO-PAID mode by default. Never route to paid APIs, activate billing, or automatically fall back from an exhausted free quota to a paid service. A provider being selectable does not mean it is authorized to execute. Only permit remote calls after confirming a no-charge route; otherwise block and explain. No guarantees of free Claude API/Claude Code use based solely on website subscription or login.
+
+Execution rule: model inference and motion rendering are distinct. AI Editor can use approved local tools and the user's existing SKILL.md package; the rendering engine/dependencies must be inspected before implementation.
+
+This is an architecture requirement, not a claim that integrations have been installed or tested. Planning stage remains in effect.
